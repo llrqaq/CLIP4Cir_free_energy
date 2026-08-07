@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLIP4Cir Training Dashboard</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de;
+    --text: #1f2328; --muted: #656d76; --accent: #0969da;
+    --green: #1a7f37; --red: #cf222e; --yellow: #9a6700;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .status-idle { background: var(--muted); } .status-running { background: var(--green); animation: pulse 1s infinite; }
+  .status-error { background: var(--red); } .status-finished { background: var(--accent); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  main { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+  .sidebar { width: 340px; min-width: 300px; background: var(--panel); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
+  .right-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* Log area (top) */
+  .log-area { display: flex; flex-direction: column; overflow: hidden; }
+  .log-header { padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  .log-output { flex: 1; overflow-y: auto; padding: 12px 16px; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 13px; line-height: 1.5; }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line.info { color: var(--muted); } .log-line.warn { color: var(--yellow); } .log-line.error { color: var(--red); }
+  .log-line.stdout { color: var(--text); } .log-line.metrics { color: var(--green); }
+
+  /* Resize handle */
+  .resize-handle { height: 6px; background: var(--border); cursor: ns-resize; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
+  .resize-handle:hover, .resize-handle.active { background: var(--accent); }
+  .resize-handle::after { content: ''; width: 30px; height: 3px; background: var(--muted); border-radius: 2px; }
+  .resize-handle:hover::after, .resize-handle.active::after { background: #fff; }
+
+  /* Metrics / History panel (bottom) */
+  .metrics-panel { background: var(--panel); border-top: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .metrics-panel-header { padding: 6px 16px; display: flex; align-items: center; gap: 4px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+  .metrics-panel-body { flex: 1; overflow-y: auto; }
+  .bottom-tab { padding: 4px 14px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--muted); }
+  .bottom-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .refresh-btn { font-size: 11px; padding: 2px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--muted); margin-left: auto; }
+  .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; font-weight: 500; }
+  input, select { width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; font-size: 13px; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .param-row { display: flex; gap: 8px; }
+  .param-row > div { flex: 1; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox-row input[type=checkbox] { width: auto; }
+  .checkbox-row label { margin: 0; font-size: 13px; color: var(--text); }
+  .btn-row { display: flex; gap: 8px; margin-top: 4px; }
+  button { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; }
+  .btn-start { background: var(--green); color: #fff; border-color: var(--green); }
+  .btn-stop { background: var(--red); color: #fff; border-color: var(--red); }
+  .btn-start:disabled, .btn-stop:disabled { opacity: 0.5; cursor: not-allowed; }
+  .tab-row { display: flex; gap: 4px; }
+  .tab { flex: 1; padding: 8px 4px; text-align: center; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--muted); }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .metrics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .metrics-table th, .metrics-table td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+  .metrics-table th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: #eaeef2; }
+  .metrics-table td:first-child, .metrics-table th:first-child { text-align: left; }
+
+  /* Progress */
+  .progress-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .progress-panel .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .progress-panel .value { font-size: 13px; font-weight: 600; }
+  .progress-bar-bg { background: #e1e4e8; border-radius: 4px; height: 8px; margin: 4px 0 10px 0; overflow: hidden; }
+  .progress-bar-fill { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; width: 0%; }
+  .loss-big { font-size: 28px; font-weight: 700; color: var(--accent); }
+
+  /* History cards */
+  .history-panel { padding: 8px 16px; }
+  .history-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; }
+  .history-card .run-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .history-card .run-name { font-weight: 600; font-size: 14px; }
+  .history-card .run-type { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--accent); color: #fff; margin-left: 8px; }
+  .history-card .run-meta { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .history-card .run-best { font-size: 13px; color: var(--green); font-weight: 600; margin-top: 4px; }
+  .history-card .run-detail { display: none; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .history-card .run-detail.open { display: block; }
+  .history-card .detail-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .history-card .detail-tab { padding: 4px 12px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  .history-card .detail-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .history-card .detail-content { max-height: 200px; overflow-y: auto; }
+  .run-arrow { transition: transform 0.2s; font-size: 12px; color: var(--muted); }
+  .run-arrow.open { transform: rotate(90deg); }
+
+  /* Chart containers */
+  .chart-row { display: flex; gap: 12px; }
+  .chart-box { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .chart-box .chart-title { font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
+  .chart-box canvas { max-height: 220px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>CLIP4Cir Training Dashboard</h1>
+  <span id="status-dot" class="status-dot status-idle"></span>
+  <span id="status-text" style="font-size:13px;color:var(--muted)">Idle</span>
+</header>
+
+<main>
+  <!-- Left sidebar -->
+  <div class="sidebar">
+    <div class="tab-row" id="task-tabs">
+      <div class="tab active" data-task="clip_fine_tune">CLIP 微调</div>
+      <div class="tab" data-task="combiner_train">Combiner 训练</div>
+      <div class="tab" data-task="validate">验证评估</div>
+    </div>
+
+    <div id="params-container"></div>
+
+    <div class="progress-panel" id="progress-panel">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+        <span class="label">Epoch</span>
+        <span class="value" id="epoch-text">- / -</span>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="epoch-bar"></div></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+        <span class="label">Batch</span>
+        <span class="value" id="batch-text">- / -</span>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="batch-bar"></div></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span class="label">Train Loss</span>
+        <span class="loss-big" id="loss-value">--</span>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-start" id="btn-start" onclick="startTraining()">&#9654; 开始训练</button>
+      <button class="btn-stop" id="btn-stop" onclick="stopTraining()" disabled>&#9632; 停止</button>
+    </div>
+  </div>
+
+  <!-- Right panel: log + metrics stacked vertically -->
+  <div class="right-panel">
+    <!-- Log area (top) -->
+    <div class="log-area" id="log-area" style="flex: 1 1 60%;">
+      <div class="log-header">
+        <span style="font-weight:600">实时日志</span>
+        <button style="font-size:12px;padding:4px 8px;background:var(--bg);color:var(--muted)" onclick="clearLog()">清空</button>
+      </div>
+      <div class="log-output" id="log-output">
+        <div class="log-line info">等待开始训练...</div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="resize-handle" id="resize-handle"></div>
+
+    <!-- Metrics / History panel (bottom) -->
+    <div class="metrics-panel" id="metrics-panel" style="flex: 0 0 240px;">
+      <div class="metrics-panel-header">
+        <div class="bottom-tab active" data-bottom-tab="realtime">实时指标</div>
+        <div class="bottom-tab" data-bottom-tab="history">历史记录</div>
+        <button class="refresh-btn" id="refresh-history-btn" style="display:none" onclick="loadHistory()">刷新</button>
+      </div>
+      <div class="metrics-panel-body">
+        <!-- Real-time metrics -->
+        <div id="bottom-realtime" style="padding:4px 16px 8px;display:flex;flex-direction:column;gap:8px">
+          <div class="chart-row">
+            <div class="chart-box"><div class="chart-title">Training Loss</div><canvas id="chart-realtime-loss"></canvas></div>
+            <div class="chart-box"><div class="chart-title">Validation Metrics</div><canvas id="chart-realtime-val"></canvas></div>
+          </div>
+          <table class="metrics-table" id="metrics-table">
+            <thead><tr><th>Epoch</th><th>Loss</th><th>Recall@10</th><th>Recall@50</th><th>Avg Recall</th></tr></thead>
+            <tbody id="metrics-body"></tbody>
+          </table>
+        </div>
+        <!-- History -->
+        <div id="bottom-history" class="history-panel" style="display:none">
+          <div id="history-list">
+            <div style="color:var(--muted);font-size:13px;text-align:center;padding:20px">加载中...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const TASK_PARAMS = {
+  clip_fine_tune: [
+    {key:'dataset',label:'数据集',type:'select',opts:['FashionIQ','CIRR'],def:'FashionIQ'},
+    {key:'fiq_dress_type',label:'FashionIQ 类别',type:'select',opts:['all','dress','toptee','shirt'],def:'all'},
+    {key:'clip_model_name',label:'CLIP 模型',type:'select',opts:['RN50','RN101','RN50x4','RN50x16','ViT-B/32','ViT-B/16'],def:'RN50'},
+    {key:'encoder',label:'微调编码器',type:'select',opts:['both','text','image'],def:'both'},
+    {key:'relevance',label:'相关性度量',type:'select',opts:['dot','free_energy','cope'],def:'dot'},
+    {key:'prob_lr',label:'方差头学习率(自由能)',type:'number',def:1e-4,step:1e-5},
+    {key:'free_energy_scale',label:'自由能缩放(自由能)',type:'number',def:1,step:0.5},
+    {key:'num_epochs',label:'训练轮数',type:'number',def:10,min:1,max:500},
+    {key:'batch_size',label:'Batch Size',type:'number',def:24,min:1,max:1024},
+    {key:'learning_rate',label:'学习率',type:'number',def:2e-6,step:1e-7,min:1e-8,max:1e-3},
+    {key:'validation_frequency',label:'验证频率(epoch)',type:'number',def:1,min:1},
+    {key:'transform',label:'预处理',type:'select',opts:['targetpad','squarepad','clip'],def:'targetpad'},
+    {key:'target_ratio',label:'Target Ratio',type:'number',def:1.25,step:0.05},
+  ],
+  combiner_train: [
+    {key:'dataset',label:'数据集',type:'select',opts:['FashionIQ','CIRR'],def:'FashionIQ'},
+    {key:'fiq_dress_type',label:'FashionIQ 类别',type:'select',opts:['all','dress','toptee','shirt'],def:'all'},
+    {key:'clip_model_name',label:'CLIP 模型',type:'select',opts:['RN50','RN101','RN50x4','RN50x16','ViT-B/32','ViT-B/16'],def:'RN50'},
+    {key:'clip_model_path',label:'微调CLIP路径(必填)',type:'clip-select',def:''},
+    {key:'relevance',label:'相关性度量',type:'select',opts:['dot','free_energy','cope'],def:'dot'},
+    {key:'prob_lr',label:'方差头学习率(自由能)',type:'number',def:1e-4,step:1e-5},
+    {key:'free_energy_scale',label:'自由能缩放(自由能)',type:'number',def:1,step:0.5},
+    {key:'projection_dim',label:'投影维度',type:'number',def:2560},
+    {key:'hidden_dim',label:'隐藏维度',type:'number',def:5120},
+    {key:'num_epochs',label:'训练轮数',type:'number',def:15,min:1,max:500},
+    {key:'batch_size',label:'Batch Size',type:'number',def:256,min:1},
+    {key:'clip_bs',label:'CLIP Batch Size',type:'number',def:16,min:1},
+    {key:'combiner_lr',label:'Combiner学习率',type:'number',def:0.0002,step:1e-5},
+    {key:'validation_frequency',label:'验证频率(epoch)',type:'number',def:1,min:1},
+    {key:'transform',label:'预处理',type:'select',opts:['targetpad','squarepad','clip'],def:'targetpad'},
+    {key:'target_ratio',label:'Target Ratio',type:'number',def:1.25,step:0.05},
+  ],
+  validate: [
+    {key:'dataset',label:'数据集',type:'select',opts:['FashionIQ','CIRR'],def:'FashionIQ'},
+    {key:'combining_function',label:'组合方式',type:'select',opts:['sum','combiner'],def:'sum'},
+    {key:'clip_model_name',label:'CLIP 模型',type:'select',opts:['RN50','RN101','RN50x4','RN50x16','ViT-B/32','ViT-B/16'],def:'RN50'},
+    {key:'clip_model_path',label:'微调CLIP路径',type:'text',def:''},
+    {key:'combiner_path',label:'Combiner路径',type:'text',def:''},
+    {key:'prob_head_path',label:'方差头路径(自由能评估)',type:'text',def:''},
+    {key:'projection_dim',label:'投影维度',type:'number',def:2560},
+    {key:'hidden_dim',label:'隐藏维度',type:'number',def:5120},
+    {key:'transform',label:'预处理',type:'select',opts:['targetpad','squarepad','clip'],def:'targetpad'},
+    {key:'target_ratio',label:'Target Ratio',type:'number',def:1.25,step:0.05},
+  ]
+};
+
+const BOOL_KEYS = ['save_model'];
+let currentTask = 'clip_fine_tune';
+let evtSource = null;
+let _realtimeMetrics = [];
+let _realtimeLossChart = null;
+let _realtimeValChart = null;
+
+function buildParams(task) {
+  const params = TASK_PARAMS[task];
+  const html = params.map(p => {
+    const id = `param-${p.key}`;
+    let input;
+    if (p.type === 'select') {
+      input = `<select id="${id}">${p.opts.map(o=>`<option value="${o}" ${o===p.def?'selected':''}>${o}</option>`).join('')}</select>`;
+    } else if (p.type === 'number') {
+      input = `<input type="number" id="${id}" value="${p.def}" ${p.step?`step="${p.step}"`:''} ${p.min!==undefined?`min="${p.min}"`:''} ${p.max!==undefined?`max="${p.max}"`:''}>`;
+    } else if (p.type === 'clip-select') {
+      input = `<select id="${id}" onchange="if(this.value==='__custom__') document.getElementById('${id}-custom').style.display='block'">
+        <option value="">-- 自动检测 --</option>
+        <option value="__custom__">手动输入...</option>
+      </select>
+      <input type="text" id="${id}-custom" placeholder="手动输入路径..." style="display:none;margin-top:4px"
+        oninput="document.getElementById('${id}').value=this.value">`;
+    } else {
+      input = `<input type="text" id="${id}" value="${p.def||''}">`;
+    }
+    return `<div><label>${p.label}</label>${input}</div>`;
+  }).join('');
+
+  const bools = `<div class="checkbox-row" style="margin-top:4px">
+    <input type="checkbox" id="param-save_model" checked><label for="param-save_model">保存最佳模型 (.pt)</label>
+  </div>`;
+
+  return `<div style="display:flex;flex-direction:column;gap:8px">${html}${bools}</div>`;
+}
+
+function getParams() {
+  const params = {};
+  const task = TASK_PARAMS[currentTask];
+  task.forEach(p => {
+    const el = document.getElementById(`param-${p.key}`);
+    if (!el) return;
+    let val = el.value;
+    if (p.type === 'clip-select' && val === '__custom__') {
+      const c = document.getElementById(`param-${p.key}-custom`);
+      val = c ? c.value : '';
+    }
+    if (p.type === 'number') val = parseFloat(val);
+    params[p.key] = val;
+  });
+  BOOL_KEYS.forEach(k => {
+    const el = document.getElementById(`param-${k}`);
+    if (el) params[k] = el.checked;
+  });
+  // Map single checkbox to backend save flags
+  if (params.save_model) {
+    params.save_training = true;
+    params.save_best = true;
+  }
+  delete params.save_model;
+  params.task_type = currentTask;
+  return params;
+}
+
+function loadClipModels() {
+  fetch('/api/clip-models')
+    .then(r => r.json())
+    .then(paths => {
+      const sel = document.getElementById('param-clip_model_path');
+      if (!sel) return;
+      // Keep existing options, remove old auto-detected ones
+      while (sel.options.length > 2) sel.remove(2);
+      paths.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p.split('/').pop(); // show just folder name
+        sel.appendChild(opt);
+      });
+    });
+}
+
+function renderParams(task) {
+  currentTask = task;
+  document.getElementById('params-container').innerHTML = buildParams(task);
+  if (task === 'combiner_train') loadClipModels();
+}
+
+function resetProgress() {
+  document.getElementById('epoch-text').textContent = '- / -';
+  document.getElementById('batch-text').textContent = '- / -';
+  document.getElementById('loss-value').textContent = '--';
+  document.getElementById('epoch-bar').style.width = '0%';
+  document.getElementById('batch-bar').style.width = '0%';
+}
+
+function updateProgress(data) {
+  const epPct = data.total_epochs > 0 ? (data.epoch / data.total_epochs * 100) : 0;
+  const btPct = data.total_batches > 0 ? (data.batch / data.total_batches * 100) : 0;
+  document.getElementById('epoch-text').textContent = `${data.epoch + 1} / ${data.total_epochs}`;
+  document.getElementById('batch-text').textContent = `${data.batch} / ${data.total_batches}`;
+  document.getElementById('loss-value').textContent = data.loss.toFixed(4);
+  document.getElementById('epoch-bar').style.width = epPct + '%';
+  document.getElementById('batch-bar').style.width = btPct + '%';
+}
+
+function startTraining() {
+  const params = getParams();
+  fetch('/api/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(params)})
+    .then(r => r.json())
+    .then(data => {
+      if (!data.ok) { alert('Error: ' + data.error); return; }
+      document.getElementById('btn-start').disabled = true;
+      document.getElementById('btn-stop').disabled = false;
+      document.getElementById('metrics-body').innerHTML = '';
+      _realtimeMetrics = [];
+      destroyRealtimeCharts();
+      resetProgress();
+      connectSSE();
+    });
+}
+
+function stopTraining() {
+  fetch('/api/stop', {method:'POST'}).then(r => r.json()).then(() => {
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-stop').disabled = true;
+  });
+}
+
+function connectSSE() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  evtSource = new EventSource('/api/log');
+  evtSource.onmessage = function(e) {
+    const entry = JSON.parse(e.data);
+    if (entry.type === 'heartbeat') return;
+    if (entry.type !== 'progress') {
+      appendLogLine(entry);
+    }
+    if (entry.type === 'progress' && entry.data) updateProgress(entry.data);
+    if (entry.type === 'metrics' && entry.data) updateMetrics(entry.data);
+  };
+  evtSource.onerror = function() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+const MAX_LOG_LINES = 500;
+function appendLogLine(entry) {
+  const logDiv = document.getElementById('log-output');
+  const cls = `log-line ${entry.type === 'stdout' ? 'stdout' : entry.type}`;
+  const ts = entry.ts ? new Date(entry.ts*1000).toLocaleTimeString() : '';
+  const msg = entry.msg || JSON.stringify(entry.data || entry);
+  logDiv.insertAdjacentHTML('beforeend', `<div class="${cls}">[${ts}] ${escapeHtml(msg)}</div>`);
+  while (logDiv.children.length > MAX_LOG_LINES) {
+    logDiv.removeChild(logDiv.firstChild);
+  }
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-output').innerHTML = '<div class="log-line info">日志已清空</div>';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// --- Bottom tab switching ---
+function switchBottomTab(tab) {
+  document.querySelectorAll('.bottom-tab').forEach(t => t.classList.remove('active'));
+  const el = document.querySelector(`[data-bottom-tab="${tab}"]`);
+  if (el) el.classList.add('active');
+  document.getElementById('bottom-realtime').style.display = tab === 'realtime' ? 'flex' : 'none';
+  document.getElementById('bottom-history').style.display = tab === 'history' ? 'block' : 'none';
+  document.getElementById('refresh-history-btn').style.display = tab === 'history' ? 'inline-block' : 'none';
+  if (tab === 'history') {
+    loadHistory();
+  } else if (tab === 'realtime') {
+    setTimeout(() => { if (_realtimeMetrics.length > 0) updateRealtimeCharts(); else createRealtimeCharts(); }, 100);
+  }
+}
+
+// --- History ---
+let historyData = [];
+
+function loadHistory() {
+  const list = document.getElementById('history-list');
+  list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px">加载中...</div>';
+  fetch('/api/history')
+    .then(r => r.json())
+    .then(data => {
+      historyData = data.runs || [];
+      renderHistoryList();
+    })
+    .catch(() => {
+      list.innerHTML = '<div style="color:var(--red);font-size:13px;text-align:center;padding:20px">加载失败，请重试</div>';
+    });
+}
+
+function renderHistoryList() {
+  const list = document.getElementById('history-list');
+  if (historyData.length === 0) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px">暂无历史训练记录</div>';
+    return;
+  }
+  list.innerHTML = historyData.map((run, i) => renderRunCard(run, i)).join('');
+}
+
+function renderRunCard(run, idx) {
+  const hp = run.hyperparameters || {};
+  const typeLabel = run.type === 'clip_fine_tune' ? 'CLIP 微调' : run.type === 'combiner_train' ? 'Combiner 训练' : '验证';
+  const bestStr = run.best_avg_recall != null
+    ? `最佳 Avg Recall: ${run.best_avg_recall.toFixed(2)}% (Epoch ${run.best_epoch})`
+    : '';
+  const metaParts = [];
+  if (hp.clip_model_name) metaParts.push(`模型: ${hp.clip_model_name}`);
+  if (hp.num_epochs) metaParts.push(`总轮数: ${hp.num_epochs}`);
+  if (hp.learning_rate != null) metaParts.push(`LR: ${hp.learning_rate}`);
+  if (hp.combiner_lr != null) metaParts.push(`Combiner LR: ${hp.combiner_lr}`);
+  if (hp.batch_size) metaParts.push(`Batch: ${hp.batch_size}`);
+  metaParts.push(`完成: ${run.num_epochs_completed} 轮`);
+
+  return `
+  <div class="history-card">
+    <div class="run-header" onclick="toggleRunCard(this, ${idx})">
+      <div>
+        <span class="run-name">${escapeHtml(run.name)}</span>
+        <span class="run-type">${typeLabel}</span>
+      </div>
+      <span class="run-arrow">▶</span>
+    </div>
+    <div class="run-meta">${metaParts.join(' | ')}</div>
+    ${bestStr ? `<div class="run-best">${bestStr}</div>` : ''}
+    <div class="run-detail" id="run-detail-${idx}">
+      <div class="detail-tabs">
+        <div class="detail-tab active" onclick="event.stopPropagation();switchDetailTab(${idx},'hp',this)">超参数</div>
+        <div class="detail-tab" onclick="event.stopPropagation();switchDetailTab(${idx},'train',this)">训练Loss</div>
+        <div class="detail-tab" onclick="event.stopPropagation();switchDetailTab(${idx},'val',this)">验证指标</div>
+        <div class="detail-tab" onclick="event.stopPropagation();switchDetailTab(${idx},'chart',this)">可视化</div>
+      </div>
+      <div class="detail-content" id="detail-content-${idx}">${renderDetailContent(run, 'hp')}</div>
+    </div>
+  </div>`;
+}
+
+function renderDetailContent(run, tab) {
+  if (tab === 'hp') {
+    const hp = run.hyperparameters || {};
+    const rows = Object.entries(hp).map(([k, v]) => {
+      let displayVal = typeof v === 'boolean' ? (v ? '是' : '否') : Array.isArray(v) ? v.join(', ') : v;
+      return `<tr><td style="font-weight:500;color:var(--muted);text-align:right;padding-right:12px;white-space:nowrap">${escapeHtml(k)}</td><td>${escapeHtml(String(displayVal))}</td></tr>`;
+    }).join('');
+    return `<table style="width:100%;font-size:12px">${rows}</table>`;
+  }
+  if (tab === 'train') {
+    const metrics = run.train_metrics || [];
+    if (metrics.length === 0) return '<div style="color:var(--muted);font-size:12px">无训练数据</div>';
+    const rows = metrics.map(m =>
+      `<tr><td>${m.epoch}</td><td>${m.train_epoch_loss != null ? m.train_epoch_loss.toFixed(4) : '-'}</td></tr>`
+    ).join('');
+    return `<table class="metrics-table"><thead><tr><th>Epoch</th><th>Train Loss</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  if (tab === 'val') {
+    const metrics = run.validation_metrics || [];
+    if (metrics.length === 0) return '<div style="color:var(--muted);font-size:12px">无验证数据</div>';
+    const keys = Object.keys(metrics[0]).filter(k => k !== 'epoch');
+    const header = `<tr><th>Epoch</th>${keys.map(k => `<th>${escapeHtml(k)}</th>`).join('')}</tr>`;
+    const rows = metrics.map(m =>
+      `<tr><td>${m.epoch}</td>${keys.map(k => {
+        const v = m[k];
+        return `<td>${typeof v === 'number' ? v.toFixed(4) : v}</td>`;
+      }).join('')}</tr>`
+    ).join('');
+    return `<table class="metrics-table"><thead>${header}</thead><tbody>${rows}</tbody></table>`;
+  }
+  if (tab === 'chart') {
+    return `
+      <div class="chart-row">
+        <div class="chart-box"><div class="chart-title">Training Loss</div><canvas id="chart-loss-${run.name.replace(/[^a-zA-Z0-9]/g,'_')}"></canvas></div>
+        <div class="chart-box"><div class="chart-title">Validation Metrics</div><canvas id="chart-val-${run.name.replace(/[^a-zA-Z0-9]/g,'_')}"></canvas></div>
+      </div>`;
+  }
+  return '';
+}
+
+function toggleRunCard(header, idx) {
+  const detail = document.getElementById('run-detail-' + idx);
+  const arrow = header.querySelector('.run-arrow');
+  if (!detail || !arrow) return;
+  const isOpen = detail.classList.contains('open');
+  if (isOpen) {
+    detail.classList.remove('open');
+    arrow.classList.remove('open');
+  } else {
+    detail.classList.add('open');
+    arrow.classList.add('open');
+  }
+}
+
+function switchDetailTab(idx, tab, tabEl) {
+  const container = document.getElementById('detail-content-' + idx);
+  const tabs = tabEl.parentElement.querySelectorAll('.detail-tab');
+  tabs.forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  if (container) {
+    // Destroy existing chart instances in this container
+    destroyChartsIn(container);
+    container.innerHTML = renderDetailContent(historyData[idx], tab);
+    if (tab === 'chart') {
+      setTimeout(() => renderCharts(historyData[idx]), 50);
+    }
+  }
+}
+
+// --- Chart rendering ---
+const COLOR_PALETTE = ['#0969da','#cf222e','#1a7f37','#9a6700','#8250df','#0550ae'];
+function destroyChartsIn(container) {
+  container.querySelectorAll('canvas').forEach(canvas => {
+    const inst = Chart.getChart(canvas);
+    if (inst) inst.destroy();
+  });
+}
+
+function destroyRealtimeCharts() {
+  if (_realtimeLossChart) { _realtimeLossChart.destroy(); _realtimeLossChart = null; }
+  if (_realtimeValChart) { _realtimeValChart.destroy(); _realtimeValChart = null; }
+}
+
+function createRealtimeCharts() {
+  destroyRealtimeCharts();
+  const lossCtx = document.getElementById('chart-realtime-loss');
+  const valCtx = document.getElementById('chart-realtime-val');
+  if (!lossCtx || !valCtx) return;
+
+  _realtimeLossChart = new Chart(lossCtx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Train Loss',
+        data: [],
+        borderColor: COLOR_PALETTE[0],
+        backgroundColor: COLOR_PALETTE[0] + '20',
+        fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { title: { display: true, text: 'Epoch' }, grid: { color: '#e1e4e8' } },
+        y: { title: { display: true, text: 'Loss' }, grid: { color: '#e1e4e8' }, beginAtZero: true }
+      },
+      interaction: { intersect: false, mode: 'index' }
+    }
+  });
+
+  _realtimeValChart = new Chart(valCtx, {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Recall@10', data: [], borderColor: COLOR_PALETTE[0], fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Recall@50', data: [], borderColor: COLOR_PALETTE[1], fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Avg Recall', data: [], borderColor: COLOR_PALETTE[2], fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 10 } } } },
+      scales: {
+        x: { title: { display: true, text: 'Epoch' }, grid: { color: '#e1e4e8' } },
+        y: { title: { display: true, text: 'Recall (%)' }, grid: { color: '#e1e4e8' }, beginAtZero: true }
+      },
+      interaction: { intersect: false, mode: 'index' }
+    }
+  });
+}
+
+function updateRealtimeCharts() {
+  if (!_realtimeLossChart || !_realtimeValChart) createRealtimeCharts();
+  if (_realtimeMetrics.length === 0) return;
+
+  const epochs = _realtimeMetrics.map(m => m.epoch);
+  const losses = _realtimeMetrics.map(m => m.loss);
+  const r10s = _realtimeMetrics.map(m => m.r10);
+  const r50s = _realtimeMetrics.map(m => m.r50);
+  const avgs = _realtimeMetrics.map(m => m.avg);
+
+  _realtimeLossChart.data.labels = epochs;
+  _realtimeLossChart.data.datasets[0].data = losses;
+  _realtimeLossChart.update('none');
+
+  _realtimeValChart.data.labels = epochs;
+  _realtimeValChart.data.datasets[0].data = r10s;
+  _realtimeValChart.data.datasets[1].data = r50s;
+  _realtimeValChart.data.datasets[2].data = avgs;
+  _realtimeValChart.update('none');
+}
+
+function sanitizeId(name) { return name.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+function renderCharts(run) {
+  const sid = sanitizeId(run.name);
+
+  // Training Loss chart
+  const lossCtx = document.getElementById('chart-loss-' + sid);
+  if (lossCtx) {
+    const trainData = run.train_metrics || [];
+    new Chart(lossCtx, {
+      type: 'line',
+      data: {
+        labels: trainData.map(m => m.epoch),
+        datasets: [{
+          label: 'Train Loss',
+          data: trainData.map(m => m.train_epoch_loss),
+          borderColor: COLOR_PALETTE[0],
+          backgroundColor: COLOR_PALETTE[0] + '20',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { title: { display: true, text: 'Epoch' }, grid: { color: '#e1e4e8' } },
+          y: { title: { display: true, text: 'Loss' }, grid: { color: '#e1e4e8' }, beginAtZero: true }
+        },
+        interaction: { intersect: false, mode: 'index' }
+      }
+    });
+  }
+
+  // Validation metrics chart
+  const valCtx = document.getElementById('chart-val-' + sid);
+  if (valCtx) {
+    const valData = run.validation_metrics || [];
+    if (valData.length > 0) {
+      const keys = Object.keys(valData[0]).filter(k => k !== 'epoch');
+      const datasets = keys.map((key, i) => ({
+        label: key,
+        data: valData.map(m => m[key]),
+        borderColor: COLOR_PALETTE[i % COLOR_PALETTE.length],
+        backgroundColor: COLOR_PALETTE[i % COLOR_PALETTE.length] + '20',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+        borderWidth: 2,
+      }));
+      new Chart(valCtx, {
+        type: 'line',
+        data: { labels: valData.map(m => m.epoch), datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 10 } } }
+          },
+          scales: {
+            x: { title: { display: true, text: 'Epoch' }, grid: { color: '#e1e4e8' } },
+            y: { title: { display: true, text: 'Recall (%)' }, grid: { color: '#e1e4e8' }, beginAtZero: true }
+          },
+          interaction: { intersect: false, mode: 'index' }
+        }
+      });
+    }
+  }
+}
+
+// --- Resizable divider ---
+(function() {
+  const handle = document.getElementById('resize-handle');
+  const logArea = document.getElementById('log-area');
+  const metricsPanel = document.getElementById('metrics-panel');
+  let dragging = false;
+  let startY = 0;
+  let startLogH = 0;
+  let startMetricsH = 0;
+
+  handle.addEventListener('mousedown', function(e) {
+    dragging = true;
+    handle.classList.add('active');
+    startY = e.clientY;
+    startLogH = logArea.offsetHeight;
+    startMetricsH = metricsPanel.offsetHeight;
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    const dy = e.clientY - startY;
+    const newLogH = startLogH + dy;
+    const newMetricsH = startMetricsH - dy;
+    const totalH = newLogH + newMetricsH;
+    const minLogH = 80;
+    const minMetricsH = 120;
+    if (newLogH < minLogH || newMetricsH < minMetricsH) return;
+    logArea.style.flex = 'none';
+    logArea.style.height = newLogH + 'px';
+    metricsPanel.style.flex = 'none';
+    metricsPanel.style.height = newMetricsH + 'px';
+  });
+
+  document.addEventListener('mouseup', function() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+  renderParams('clip_fine_tune');
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      renderParams(t.dataset.task);
+      if (t.dataset.task === 'combiner_train') loadClipModels();
+    });
+  });
+  document.querySelectorAll('.bottom-tab').forEach(t => {
+    t.addEventListener('click', () => switchBottomTab(t.dataset.bottomTab));
+  });
+  setInterval(() => {
+    fetch('/api/status').then(r => r.json()).then(s => {
+      const dot = document.getElementById('status-dot');
+      const txt = document.getElementById('status-text');
+      dot.className = 'status-dot status-' + s.state;
+      txt.textContent = s.state === 'running' ? `Running (PID ${s.pid})` : s.state.charAt(0).toUpperCase()+s.state.slice(1);
+      if (s.state !== 'running') {
+        document.getElementById('btn-start').disabled = false;
+        document.getElementById('btn-stop').disabled = true;
+      }
+    });
+  }, 5000);
+});
+</script>
+</body>
+</html>
